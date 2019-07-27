@@ -37,17 +37,25 @@ import org.apache.kafka.common.message.ControlledShutdownRequestData;
 import org.apache.kafka.common.message.ControlledShutdownResponseData.RemainingPartition;
 import org.apache.kafka.common.message.ControlledShutdownResponseData.RemainingPartitionCollection;
 import org.apache.kafka.common.message.ControlledShutdownResponseData;
+import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
+import org.apache.kafka.common.message.CreateDelegationTokenRequestData.CreatableRenewers;
+import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableReplicaAssignment;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopic;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreateableTopicConfig;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsResponseData.CreatableTopicResult;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
+import org.apache.kafka.common.message.DeleteGroupsRequestData;
+import org.apache.kafka.common.message.DeleteGroupsResponseData;
+import org.apache.kafka.common.message.DeleteGroupsResponseData.DeletableGroupResult;
+import org.apache.kafka.common.message.DeleteGroupsResponseData.DeletableGroupResultCollection;
 import org.apache.kafka.common.message.DeleteTopicsRequestData;
 import org.apache.kafka.common.message.DeleteTopicsResponseData.DeletableTopicResult;
 import org.apache.kafka.common.message.DeleteTopicsResponseData;
 import org.apache.kafka.common.message.DescribeGroupsRequestData;
 import org.apache.kafka.common.message.DescribeGroupsResponseData;
+import org.apache.kafka.common.message.DescribeGroupsResponseData.DescribedGroup;
 import org.apache.kafka.common.message.ElectLeadersResponseData.PartitionResult;
 import org.apache.kafka.common.message.ElectLeadersResponseData.ReplicaElectionResult;
 import org.apache.kafka.common.message.FindCoordinatorRequestData;
@@ -56,14 +64,16 @@ import org.apache.kafka.common.message.HeartbeatResponseData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData.AlterConfigsResource;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData.AlterableConfig;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
-import org.apache.kafka.common.message.IncrementalAlterConfigsResponseData.AlterConfigsResourceResult;
+import org.apache.kafka.common.message.IncrementalAlterConfigsResponseData.AlterConfigsResourceResponse;
 import org.apache.kafka.common.message.IncrementalAlterConfigsResponseData;
 import org.apache.kafka.common.message.InitProducerIdRequestData;
 import org.apache.kafka.common.message.InitProducerIdResponseData;
 import org.apache.kafka.common.message.JoinGroupRequestData;
 import org.apache.kafka.common.message.JoinGroupResponseData;
-import org.apache.kafka.common.message.LeaveGroupRequestData;
+import org.apache.kafka.common.message.LeaveGroupRequestData.MemberIdentity;
 import org.apache.kafka.common.message.LeaveGroupResponseData;
+import org.apache.kafka.common.message.ListGroupsRequestData;
+import org.apache.kafka.common.message.ListGroupsResponseData;
 import org.apache.kafka.common.message.OffsetCommitRequestData;
 import org.apache.kafka.common.message.OffsetCommitResponseData;
 import org.apache.kafka.common.message.SaslAuthenticateRequestData;
@@ -116,7 +126,6 @@ import java.util.Optional;
 import java.util.Set;
 
 import static java.util.Arrays.asList;
-import static java.util.Collections.singletonList;
 import static org.apache.kafka.common.requests.FetchMetadata.INVALID_SESSION_ID;
 import static org.apache.kafka.test.TestUtils.toBuffer;
 import static org.junit.Assert.assertEquals;
@@ -175,14 +184,14 @@ public class RequestResponseTest {
         checkErrorResponse(createListOffsetRequest(2), new UnknownServerException(), true);
         checkResponse(createListOffsetResponse(2), 2, true);
         checkRequest(MetadataRequest.Builder.allTopics().build((short) 2), true);
-        checkRequest(createMetadataRequest(1, singletonList("topic1")), true);
-        checkErrorResponse(createMetadataRequest(1, singletonList("topic1")), new UnknownServerException(), true);
+        checkRequest(createMetadataRequest(1, Collections.singletonList("topic1")), true);
+        checkErrorResponse(createMetadataRequest(1, Collections.singletonList("topic1")), new UnknownServerException(), true);
         checkResponse(createMetadataResponse(), 2, true);
-        checkErrorResponse(createMetadataRequest(2, singletonList("topic1")), new UnknownServerException(), true);
+        checkErrorResponse(createMetadataRequest(2, Collections.singletonList("topic1")), new UnknownServerException(), true);
         checkResponse(createMetadataResponse(), 3, true);
-        checkErrorResponse(createMetadataRequest(3, singletonList("topic1")), new UnknownServerException(), true);
+        checkErrorResponse(createMetadataRequest(3, Collections.singletonList("topic1")), new UnknownServerException(), true);
         checkResponse(createMetadataResponse(), 4, true);
-        checkErrorResponse(createMetadataRequest(4, singletonList("topic1")), new UnknownServerException(), true);
+        checkErrorResponse(createMetadataRequest(4, Collections.singletonList("topic1")), new UnknownServerException(), true);
         checkRequest(OffsetFetchRequest.forAllPartitions("group1"), true);
         checkErrorResponse(OffsetFetchRequest.forAllPartitions("group1"), new NotCoordinatorException("Not Coordinator"), true);
         checkRequest(createOffsetFetchRequest(0), true);
@@ -253,7 +262,7 @@ public class RequestResponseTest {
         checkOlderFetchVersions();
         checkResponse(createMetadataResponse(), 0, true);
         checkResponse(createMetadataResponse(), 1, true);
-        checkErrorResponse(createMetadataRequest(1, singletonList("topic1")), new UnknownServerException(), true);
+        checkErrorResponse(createMetadataRequest(1, Collections.singletonList("topic1")), new UnknownServerException(), true);
         checkRequest(createOffsetCommitRequest(0), true);
         checkErrorResponse(createOffsetCommitRequest(0), new UnknownServerException(), true);
         checkRequest(createOffsetCommitRequest(1), true);
@@ -714,8 +723,7 @@ public class RequestResponseTest {
     public void testOffsetFetchRequestBuilderToString() {
         String allTopicPartitionsString = OffsetFetchRequest.Builder.allTopicPartitions("someGroup").toString();
         assertTrue(allTopicPartitionsString.contains("<ALL>"));
-        String string = new OffsetFetchRequest.Builder("group1",
-                singletonList(new TopicPartition("test11", 1))).toString();
+        String string = new OffsetFetchRequest.Builder("group1", Collections.singletonList(new TopicPartition("test11", 1))).toString();
         assertTrue(string.contains("test11"));
         assertTrue(string.contains("group1"));
     }
@@ -814,17 +822,7 @@ public class RequestResponseTest {
                         .setName("consumer-range")
                         .setMetadata(new byte[0])).iterator()
         );
-        if (version == 0) {
-            return new JoinGroupRequest.Builder(
-                    new JoinGroupRequestData()
-                            .setGroupId("group1")
-                            .setSessionTimeoutMs(30000)
-                            .setMemberId("consumer1")
-                            .setGroupInstanceId(null)
-                            .setProtocolType("consumer")
-                            .setProtocols(protocols))
-                    .build((short) version);
-        } else if (version <= 4) {
+        if (version <= 4) {
             return new JoinGroupRequest.Builder(
                     new JoinGroupRequestData()
                             .setGroupId("group1")
@@ -871,12 +869,18 @@ public class RequestResponseTest {
     }
 
     private ListGroupsRequest createListGroupsRequest() {
-        return new ListGroupsRequest.Builder().build();
+        return new ListGroupsRequest.Builder(new ListGroupsRequestData()).build();
     }
 
     private ListGroupsResponse createListGroupsResponse() {
-        List<ListGroupsResponse.Group> groups = Collections.singletonList(new ListGroupsResponse.Group("test-group", "consumer"));
-        return new ListGroupsResponse(Errors.NONE, groups);
+        return new ListGroupsResponse(
+                new ListGroupsResponseData()
+                        .setErrorCode(Errors.NONE.code())
+                        .setGroups(Collections.singletonList(
+                                new ListGroupsResponseData.ListedGroup()
+                                        .setGroupId("test-group")
+                                        .setProtocolType("consumer")
+                )));
     }
 
     private DescribeGroupsRequest createDescribeGroupRequest() {
@@ -889,16 +893,24 @@ public class RequestResponseTest {
         String clientId = "consumer-1";
         String clientHost = "localhost";
         DescribeGroupsResponseData describeGroupsResponseData = new DescribeGroupsResponseData();
-        DescribeGroupsResponseData.DescribedGroupMember member = DescribeGroupsResponse.groupMember("memberId",
+        DescribeGroupsResponseData.DescribedGroupMember member = DescribeGroupsResponse.groupMember("memberId", null,
                 clientId, clientHost, new byte[0], new byte[0]);
-        DescribeGroupsResponseData.DescribedGroup metadata = DescribeGroupsResponse.groupMetadata("test-group", Errors.NONE,
-                "STABLE", "consumer", "roundrobin", asList(member), Collections.emptySet());
+        DescribedGroup metadata = DescribeGroupsResponse.groupMetadata("test-group",
+                                                                       Errors.NONE,
+                                                                       "STABLE",
+                                                                       "consumer",
+                                                                       "roundrobin",
+                                                                       Collections.singletonList(member),
+                                                                       Collections.emptySet());
         describeGroupsResponseData.groups().add(metadata);
         return new DescribeGroupsResponse(describeGroupsResponseData);
     }
 
     private LeaveGroupRequest createLeaveGroupRequest() {
-        return new LeaveGroupRequest.Builder(new LeaveGroupRequestData().setGroupId("group1").setMemberId("consumer1")).build();
+        return new LeaveGroupRequest.Builder(
+            "group1", Collections.singletonList(new MemberIdentity()
+                                                    .setMemberId("consumer1"))
+            ).build();
     }
 
     private LeaveGroupResponse createLeaveGroupResponse() {
@@ -906,13 +918,21 @@ public class RequestResponseTest {
     }
 
     private DeleteGroupsRequest createDeleteGroupsRequest() {
-        return new DeleteGroupsRequest.Builder(Collections.singleton("test-group")).build();
+        return new DeleteGroupsRequest.Builder(
+            new DeleteGroupsRequestData()
+                .setGroupsNames(Collections.singletonList("test-group"))
+        ).build();
     }
 
     private DeleteGroupsResponse createDeleteGroupsResponse() {
-        Map<String, Errors> result = new HashMap<>();
-        result.put("test-group", Errors.NONE);
-        return new DeleteGroupsResponse(result);
+        DeletableGroupResultCollection result = new DeletableGroupResultCollection();
+        result.add(new DeletableGroupResult()
+                       .setGroupId("test-group")
+                       .setErrorCode(Errors.NONE.code()));
+        return new DeleteGroupsResponse(
+            new DeleteGroupsResponseData()
+                .setResults(result)
+        );
     }
 
     @SuppressWarnings("deprecation")
@@ -1027,7 +1047,7 @@ public class RequestResponseTest {
     }
 
     private OffsetFetchRequest createOffsetFetchRequest(int version) {
-        return new OffsetFetchRequest.Builder("group1", singletonList(new TopicPartition("test11", 1)))
+        return new OffsetFetchRequest.Builder("group1", Collections.singletonList(new TopicPartition("test11", 1)))
                 .build((short) version);
     }
 
@@ -1175,7 +1195,7 @@ public class RequestResponseTest {
     private SaslHandshakeResponse createSaslHandshakeResponse() {
         return new SaslHandshakeResponse(
                 new SaslHandshakeResponseData()
-                .setErrorCode(Errors.NONE.code()).setMechanisms(singletonList("GSSAPI")));
+                .setErrorCode(Errors.NONE.code()).setMechanisms(Collections.singletonList("GSSAPI")));
     }
 
     private SaslAuthenticateRequest createSaslAuthenticateRequest() {
@@ -1484,15 +1504,30 @@ public class RequestResponseTest {
     }
 
     private CreateDelegationTokenRequest createCreateTokenRequest() {
-        List<KafkaPrincipal> renewers = new ArrayList<>();
-        renewers.add(SecurityUtils.parseKafkaPrincipal("User:user1"));
-        renewers.add(SecurityUtils.parseKafkaPrincipal("User:user2"));
-        return new CreateDelegationTokenRequest.Builder(renewers, System.currentTimeMillis()).build();
+        List<CreatableRenewers> renewers = new ArrayList<>();
+        renewers.add(new CreatableRenewers()
+                .setPrincipalType("User")
+                .setPrincipalName("user1"));
+        renewers.add(new CreatableRenewers()
+                .setPrincipalType("User")
+                .setPrincipalName("user2"));
+        return new CreateDelegationTokenRequest.Builder(new CreateDelegationTokenRequestData()
+                .setRenewers(renewers)
+                .setMaxLifetimeMs(System.currentTimeMillis())).build();
     }
 
     private CreateDelegationTokenResponse createCreateTokenResponse() {
-        return new CreateDelegationTokenResponse(20, Errors.NONE, SecurityUtils.parseKafkaPrincipal("User:user1"), System.currentTimeMillis(),
-            System.currentTimeMillis(), System.currentTimeMillis(), "token1", ByteBuffer.wrap("test".getBytes()));
+        CreateDelegationTokenResponseData data = new CreateDelegationTokenResponseData()
+                .setThrottleTimeMs(20)
+                .setErrorCode(Errors.NONE.code())
+                .setPrincipalType("User")
+                .setPrincipalName("user1")
+                .setIssueTimestampMs(System.currentTimeMillis())
+                .setExpiryTimestampMs(System.currentTimeMillis())
+                .setMaxTimestampMs(System.currentTimeMillis())
+                .setTokenId("token1")
+                .setHmac("test".getBytes());
+        return new CreateDelegationTokenResponse(data);
     }
 
     private RenewDelegationTokenRequest createRenewTokenRequest() {
@@ -1588,7 +1623,7 @@ public class RequestResponseTest {
     private IncrementalAlterConfigsResponse createIncrementalAlterConfigsResponse() {
         IncrementalAlterConfigsResponseData data = new IncrementalAlterConfigsResponseData();
 
-        data.responses().add(new AlterConfigsResourceResult()
+        data.responses().add(new AlterConfigsResourceResponse()
                 .setResourceName("testtopic")
                 .setResourceType(ResourceType.TOPIC.code())
                 .setErrorCode(Errors.INVALID_REQUEST.code())

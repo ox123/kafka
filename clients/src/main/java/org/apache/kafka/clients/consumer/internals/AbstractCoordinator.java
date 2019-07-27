@@ -35,16 +35,17 @@ import org.apache.kafka.common.message.FindCoordinatorRequestData;
 import org.apache.kafka.common.message.HeartbeatRequestData;
 import org.apache.kafka.common.message.JoinGroupRequestData;
 import org.apache.kafka.common.message.JoinGroupResponseData;
-import org.apache.kafka.common.message.LeaveGroupRequestData;
+import org.apache.kafka.common.message.LeaveGroupRequestData.MemberIdentity;
+import org.apache.kafka.common.message.LeaveGroupResponseData.MemberResponse;
 import org.apache.kafka.common.message.SyncGroupRequestData;
 import org.apache.kafka.common.metrics.Measurable;
 import org.apache.kafka.common.metrics.MetricConfig;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.stats.Avg;
-import org.apache.kafka.common.metrics.stats.Count;
 import org.apache.kafka.common.metrics.stats.Max;
 import org.apache.kafka.common.metrics.stats.Meter;
+import org.apache.kafka.common.metrics.stats.WindowedCount;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.FindCoordinatorRequest;
 import org.apache.kafka.common.requests.FindCoordinatorRequest.CoordinatorType;
@@ -541,9 +542,10 @@ public abstract class AbstractCoordinator implements Closeable {
                 // log the error and re-throw the exception
                 log.error("Attempt to join group failed due to fatal error: {}", error.message());
                 if (error == Errors.GROUP_MAX_SIZE_REACHED) {
-                    future.raise(new GroupMaxSizeReachedException(rebalanceConfig.groupId));
+                    future.raise(new GroupMaxSizeReachedException("Consumer group " + rebalanceConfig.groupId +
+                            " already has the configured maximum number of members."));
                 } else if (error == Errors.GROUP_AUTHORIZATION_FAILED) {
-                    future.raise(new GroupAuthorizationException(rebalanceConfig.groupId));
+                    future.raise(GroupAuthorizationException.forGroupId(rebalanceConfig.groupId));
                 } else {
                     future.raise(error);
                 }
@@ -633,7 +635,7 @@ public abstract class AbstractCoordinator implements Closeable {
                 requestRejoin();
 
                 if (error == Errors.GROUP_AUTHORIZATION_FAILED) {
-                    future.raise(new GroupAuthorizationException(rebalanceConfig.groupId));
+                    future.raise(GroupAuthorizationException.forGroupId(rebalanceConfig.groupId));
                 } else if (error == Errors.REBALANCE_IN_PROGRESS) {
                     log.debug("SyncGroup failed because the group began another rebalance");
                     future.raise(error);
@@ -699,7 +701,7 @@ public abstract class AbstractCoordinator implements Closeable {
                 }
                 future.complete(null);
             } else if (error == Errors.GROUP_AUTHORIZATION_FAILED) {
-                future.raise(new GroupAuthorizationException(rebalanceConfig.groupId));
+                future.raise(GroupAuthorizationException.forGroupId(rebalanceConfig.groupId));
             } else {
                 log.debug("Group coordinator lookup failed: {}", findCoordinatorResponse.data().errorMessage());
                 future.raise(error);
@@ -823,7 +825,7 @@ public abstract class AbstractCoordinator implements Closeable {
             // needs this lock to complete and terminate after close flag is set.
             synchronized (this) {
                 if (rebalanceConfig.leaveGroupOnClose) {
-                    maybeLeaveGroup();
+                    maybeLeaveGroup("the consumer is being closed");
                 }
 
                 // At this point, there may be pending commits (async commits or sync commits that were
@@ -840,8 +842,10 @@ public abstract class AbstractCoordinator implements Closeable {
 
     /**
      * Leave the current group and reset local generation/memberId.
+     * @param leaveReason reason to attempt leaving the group
      */
-    public synchronized void maybeLeaveGroup() {
+    public synchronized RequestFuture<Void> maybeLeaveGroup(String leaveReason) {
+        RequestFuture<Void> future = null;
         // Starting from 2.3, only dynamic members will send LeaveGroupRequest to the broker,
         // consumer with valid group.instance.id is viewed as static member that never sends LeaveGroup,
         // and the membership expiration is only controlled by session timeout.
@@ -849,15 +853,20 @@ public abstract class AbstractCoordinator implements Closeable {
                 state != MemberState.UNJOINED && generation.hasMemberId()) {
             // this is a minimal effort attempt to leave the group. we do not
             // attempt any resending if the request fails or times out.
-            log.info("Member {} sending LeaveGroup request to coordinator {}", generation.memberId, coordinator);
-            LeaveGroupRequest.Builder request = new LeaveGroupRequest.Builder(new LeaveGroupRequestData()
-                    .setGroupId(rebalanceConfig.groupId).setMemberId(generation.memberId));
-            client.send(coordinator, request)
+            log.info("Member {} sending LeaveGroup request to coordinator {} due to {}",
+                     generation.memberId, coordinator, leaveReason);
+            LeaveGroupRequest.Builder request = new LeaveGroupRequest.Builder(
+                rebalanceConfig.groupId,
+                Collections.singletonList(new MemberIdentity()
+                                              .setMemberId(generation.memberId))
+            );
+            future = client.send(coordinator, request)
                     .compose(new LeaveGroupResponseHandler());
             client.pollNoWakeup();
         }
 
         resetGeneration();
+        return future;
     }
 
     protected boolean isDynamicMember() {
@@ -867,12 +876,18 @@ public abstract class AbstractCoordinator implements Closeable {
     private class LeaveGroupResponseHandler extends CoordinatorResponseHandler<LeaveGroupResponse, Void> {
         @Override
         public void handle(LeaveGroupResponse leaveResponse, RequestFuture<Void> future) {
-            Errors error = leaveResponse.error();
+            final List<MemberResponse> members = leaveResponse.memberResponses();
+            if (members.size() > 1) {
+                future.raise(new IllegalStateException("The expected leave group response " +
+                                                           "should only contain no more than one member info, however get " + members));
+            }
+
+            final Errors error = leaveResponse.error();
             if (error == Errors.NONE) {
                 log.debug("LeaveGroup request returned successfully");
                 future.complete(null);
             } else {
-                log.debug("LeaveGroup request failed with error: {}", error.message());
+                log.error("LeaveGroup request failed with error: {}", error.message());
                 future.raise(error);
             }
         }
@@ -921,7 +936,7 @@ public abstract class AbstractCoordinator implements Closeable {
                 resetGeneration();
                 future.raise(error);
             } else if (error == Errors.GROUP_AUTHORIZATION_FAILED) {
-                future.raise(new GroupAuthorizationException(rebalanceConfig.groupId));
+                future.raise(GroupAuthorizationException.forGroupId(rebalanceConfig.groupId));
             } else {
                 future.raise(new KafkaException("Unexpected error in heartbeat response: " + error.message()));
             }
@@ -958,7 +973,7 @@ public abstract class AbstractCoordinator implements Closeable {
     }
 
     protected Meter createMeter(Metrics metrics, String groupName, String baseName, String descriptiveName) {
-        return new Meter(new Count(),
+        return new Meter(new WindowedCount(),
                 metrics.metricName(baseName + "-rate", groupName,
                         String.format("The number of %s per second", descriptiveName)),
                 metrics.metricName(baseName + "-total", groupName,
@@ -1088,14 +1103,13 @@ public abstract class AbstractCoordinator implements Closeable {
                             markCoordinatorUnknown();
                         } else if (heartbeat.pollTimeoutExpired(now)) {
                             // the poll timeout has expired, which means that the foreground thread has stalled
-                            // in between calls to poll(), so we explicitly leave the group.
-                            log.warn("This member will leave the group because consumer poll timeout has expired. This " +
-                                    "means the time between subsequent calls to poll() was longer than the configured " +
-                                    "max.poll.interval.ms, which typically implies that the poll loop is spending too " +
-                                    "much time processing messages. You can address this either by increasing " +
-                                    "max.poll.interval.ms or by reducing the maximum size of batches returned in poll() " +
-                                    "with max.poll.records.");
-                            maybeLeaveGroup();
+                            // in between calls to poll().
+                            String leaveReason = "consumer poll timeout has expired. This means the time between subsequent calls to poll() " +
+                                                    "was longer than the configured max.poll.interval.ms, which typically implies that " +
+                                                    "the poll loop is spending too much time processing messages. " +
+                                                    "You can address this either by increasing max.poll.interval.ms or by reducing " +
+                                                    "the maximum size of batches returned in poll() with max.poll.records.";
+                            maybeLeaveGroup(leaveReason);
                         } else if (!heartbeat.shouldHeartbeat(now)) {
                             // poll again after waiting for the retry backoff in case the heartbeat failed or the
                             // coordinator disconnected
