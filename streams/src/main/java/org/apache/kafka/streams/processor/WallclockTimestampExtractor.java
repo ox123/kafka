@@ -17,7 +17,6 @@
 package org.apache.kafka.streams.processor;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.common.annotation.InterfaceStability;
 
 /**
  * Retrieves current wall clock timestamps as {@link System#currentTimeMillis()}.
@@ -29,9 +28,8 @@ import org.apache.kafka.common.annotation.InterfaceStability;
  *
  * @see FailOnInvalidTimestamp
  * @see LogAndSkipOnInvalidTimestamp
- * @see UsePreviousTimeOnInvalidTimestamp
+ * @see UsePartitionTimeOnInvalidTimestamp
  */
-@InterfaceStability.Evolving
 public class WallclockTimestampExtractor implements TimestampExtractor {
 
     /**

@@ -30,7 +30,6 @@ import org.apache.kafka.common.security.JaasContext
 import org.apache.kafka.common.utils.{LogContext, Time}
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.WriteTxnMarkersRequest.TxnMarkerEntry
-import com.yammer.metrics.core.Gauge
 import java.util
 import java.util.concurrent.{BlockingQueue, ConcurrentHashMap, LinkedBlockingQueue}
 
@@ -52,7 +51,8 @@ object TransactionMarkerChannelManager {
       config.interBrokerListenerName,
       config.saslMechanismInterBrokerProtocol,
       time,
-      config.saslInterBrokerHandshakeRequestEnable
+      config.saslInterBrokerHandshakeRequestEnable,
+      logContext
     )
     channelBuilder match {
       case reconfigurable: Reconfigurable => config.addReconfigurable(reconfigurable)
@@ -143,19 +143,8 @@ class TransactionMarkerChannelManager(config: KafkaConfig,
 
   override val requestTimeoutMs: Int = config.requestTimeoutMs
 
-  newGauge(
-    "UnknownDestinationQueueSize",
-    new Gauge[Int] {
-      def value: Int = markersQueueForUnknownBroker.totalNumMarkers
-    }
-  )
-
-  newGauge(
-    "LogAppendRetryQueueSize",
-    new Gauge[Int] {
-      def value: Int = txnLogAppendRetryQueue.size
-    }
-  )
+  newGauge("UnknownDestinationQueueSize", () => markersQueueForUnknownBroker.totalNumMarkers)
+  newGauge("LogAppendRetryQueueSize", () => txnLogAppendRetryQueue.size)
 
   override def generateRequests() = drainQueuedTransactionMarkers()
 
@@ -173,7 +162,7 @@ class TransactionMarkerChannelManager(config: KafkaConfig,
   // visible for testing
   private[transaction] def queueForUnknownBroker = markersQueueForUnknownBroker
 
-  private[transaction] def addMarkersForBroker(broker: Node, txnTopicPartition: Int, txnIdAndMarker: TxnIdAndMarkerEntry) {
+  private[transaction] def addMarkersForBroker(broker: Node, txnTopicPartition: Int, txnIdAndMarker: TxnIdAndMarkerEntry): Unit = {
     val brokerId = broker.id
 
     // we do not synchronize on the update of the broker node with the enqueuing,

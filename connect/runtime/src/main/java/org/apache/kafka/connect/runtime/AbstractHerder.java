@@ -30,6 +30,7 @@ import org.apache.kafka.connect.connector.policy.ConnectorClientConfigRequest;
 import org.apache.kafka.connect.errors.NotFoundException;
 import org.apache.kafka.connect.runtime.distributed.ClusterConfigState;
 import org.apache.kafka.connect.runtime.isolation.Plugins;
+import org.apache.kafka.connect.runtime.rest.entities.ActiveTopicsInfo;
 import org.apache.kafka.connect.runtime.rest.entities.ConfigInfo;
 import org.apache.kafka.connect.runtime.rest.entities.ConfigInfos;
 import org.apache.kafka.connect.runtime.rest.entities.ConfigKeyInfo;
@@ -62,6 +63,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Abstract Herder implementation which handles connector/task lifecycle tracking. Extensions
@@ -258,6 +260,25 @@ public abstract class AbstractHerder implements Herder, TaskStatus.Listener, Con
         Map<String, String> conf = config(connName);
         return new ConnectorStateInfo(connName, connectorState, taskStates,
             conf == null ? ConnectorType.UNKNOWN : connectorTypeForClass(conf.get(ConnectorConfig.CONNECTOR_CLASS_CONFIG)));
+    }
+
+    @Override
+    public ActiveTopicsInfo connectorActiveTopics(String connName) {
+        Collection<String> topics = statusBackingStore.getAllTopics(connName).stream()
+                .map(TopicStatus::topic)
+                .collect(Collectors.toList());
+        return new ActiveTopicsInfo(connName, topics);
+    }
+
+    @Override
+    public void resetConnectorActiveTopics(String connName) {
+        statusBackingStore.getAllTopics(connName).stream()
+                .forEach(status -> statusBackingStore.deleteTopic(status.connector(), status.topic()));
+    }
+
+    @Override
+    public StatusBackingStore statusBackingStore() {
+        return statusBackingStore;
     }
 
     @Override
@@ -598,12 +619,13 @@ public abstract class AbstractHerder implements Herder, TaskStatus.Listener, Con
         return result;
     }
 
-    private static Set<String> keysWithVariableValues(Map<String, String> rawConfig, Pattern pattern) {
+    // Visible for testing
+    static Set<String> keysWithVariableValues(Map<String, String> rawConfig, Pattern pattern) {
         Set<String> keys = new HashSet<>();
         for (Map.Entry<String, String> config : rawConfig.entrySet()) {
             if (config.getValue() != null) {
                 Matcher matcher = pattern.matcher(config.getValue());
-                if (matcher.matches()) {
+                if (matcher.find()) {
                     keys.add(config.getKey());
                 }
             }

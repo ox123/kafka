@@ -17,7 +17,6 @@
 package org.apache.kafka.streams.processor;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.common.annotation.InterfaceStability;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,10 +42,9 @@ import org.slf4j.LoggerFactory;
  * If you need <i>processing-time</i> semantics, use {@link WallclockTimestampExtractor}.
  *
  * @see FailOnInvalidTimestamp
- * @see UsePreviousTimeOnInvalidTimestamp
+ * @see UsePartitionTimeOnInvalidTimestamp
  * @see WallclockTimestampExtractor
  */
-@InterfaceStability.Evolving
 public class LogAndSkipOnInvalidTimestamp extends ExtractRecordMetadataTimestamp {
     private static final Logger log = LoggerFactory.getLogger(LogAndSkipOnInvalidTimestamp.class);
 

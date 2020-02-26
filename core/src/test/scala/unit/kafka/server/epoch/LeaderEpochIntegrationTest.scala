@@ -52,7 +52,7 @@ class LeaderEpochIntegrationTest extends ZooKeeperTestHarness with Logging {
   var producer: KafkaProducer[Array[Byte], Array[Byte]] = null
 
   @After
-  override def tearDown() {
+  override def tearDown(): Unit = {
     if (producer != null)
       producer.close()
     TestUtils.shutdownServers(brokers)
@@ -60,7 +60,7 @@ class LeaderEpochIntegrationTest extends ZooKeeperTestHarness with Logging {
   }
 
   @Test
-  def shouldAddCurrentLeaderEpochToMessagesAsTheyAreWrittenToLeader() {
+  def shouldAddCurrentLeaderEpochToMessagesAsTheyAreWrittenToLeader(): Unit = {
     brokers ++= (0 to 1).map { id => createServer(fromProps(createBrokerConfig(id, zkConnect))) }
 
     // Given two topics with replication of a single partition
@@ -231,10 +231,7 @@ class LeaderEpochIntegrationTest extends ZooKeeperTestHarness with Logging {
 
   private def waitForEpochChangeTo(topic: String, partition: Int, epoch: Int): Unit = {
     TestUtils.waitUntilTrue(() => {
-      brokers(0).metadataCache.getPartitionInfo(topic, partition) match {
-        case Some(m) => m.basePartitionState.leaderEpoch == epoch
-        case None => false
-      }
+      brokers(0).metadataCache.getPartitionInfo(topic, partition).exists(_.leaderEpoch == epoch)
     }, "Epoch didn't change")
   }
 
@@ -245,10 +242,10 @@ class LeaderEpochIntegrationTest extends ZooKeeperTestHarness with Logging {
       val leo = broker.getLogManager().getLog(tp).get.logEndOffset
       result = result && leo > 0 && brokers.forall { broker =>
         broker.getLogManager().getLog(tp).get.logSegments.iterator.forall { segment =>
-          if (segment.read(minOffset, None, Integer.MAX_VALUE) == null) {
+          if (segment.read(minOffset, Integer.MAX_VALUE) == null) {
             false
           } else {
-            segment.read(minOffset, None, Integer.MAX_VALUE)
+            segment.read(minOffset, Integer.MAX_VALUE)
               .records.batches().iterator().asScala.forall(
               expectedLeaderEpoch == _.partitionLeaderEpoch()
             )

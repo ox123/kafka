@@ -36,7 +36,7 @@ import org.apache.kafka.common.errors.TimeoutException
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.apache.kafka.common.serialization.StringDeserializer
-import org.apache.kafka.clients.admin.{Admin, AdminClient, AdminClientConfig}
+import org.apache.kafka.clients.admin.{Admin, AdminClientConfig}
 import org.junit.Assert._
 import org.scalatest.Assertions.intercept
 
@@ -62,7 +62,7 @@ class UncleanLeaderElectionTest extends ZooKeeperTestHarness {
   val networkProcessorLogger = Logger.getLogger(classOf[kafka.network.Processor])
 
   @Before
-  override def setUp() {
+  override def setUp(): Unit = {
     super.setUp()
 
     configProps1 = createBrokerConfig(brokerId1, zkConnect)
@@ -80,7 +80,7 @@ class UncleanLeaderElectionTest extends ZooKeeperTestHarness {
   }
 
   @After
-  override def tearDown() {
+  override def tearDown(): Unit = {
     servers.foreach(server => shutdownServer(server))
     servers.foreach(server => CoreUtils.delete(server.config.logDirs))
 
@@ -91,7 +91,7 @@ class UncleanLeaderElectionTest extends ZooKeeperTestHarness {
     super.tearDown()
   }
 
-  private def startBrokers(cluster: Seq[Properties]) {
+  private def startBrokers(cluster: Seq[Properties]): Unit = {
     for (props <- cluster) {
       val config = KafkaConfig.fromProps(props)
       val server = createServer(config)
@@ -255,7 +255,7 @@ class UncleanLeaderElectionTest extends ZooKeeperTestHarness {
     //make sure follower server joins the ISR
     TestUtils.waitUntilTrue(() => {
       val partitionInfoOpt = followerServer.metadataCache.getPartitionInfo(topic, partitionId)
-      partitionInfoOpt.isDefined && partitionInfoOpt.get.basePartitionState.isr.contains(followerId)
+      partitionInfoOpt.isDefined && partitionInfoOpt.get.isr.contains(followerId)
     }, "Inconsistent metadata after first server startup")
 
     servers.filter(server => server.config.brokerId == leaderId).foreach(server => shutdownServer(server))
@@ -352,6 +352,6 @@ class UncleanLeaderElectionTest extends ZooKeeperTestHarness {
     val bootstrapServers = TestUtils.bootstrapServers(servers, new ListenerName("PLAINTEXT"))
     config.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers)
     config.put(AdminClientConfig.METADATA_MAX_AGE_CONFIG, "10")
-    AdminClient.create(config)
+    Admin.create(config)
   }
 }

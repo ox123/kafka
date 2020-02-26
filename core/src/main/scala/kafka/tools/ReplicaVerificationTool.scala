@@ -200,11 +200,9 @@ object ReplicaVerificationTool extends Logging {
         fetcherId = counter.incrementAndGet())
     }
 
-    Runtime.getRuntime.addShutdownHook(new Thread() {
-      override def run() {
+    Exit.addShutdownHook("ReplicaVerificationToolShutdownHook", {
         info("Stopping all fetchers")
         fetcherThreads.foreach(_.shutdown())
-      }
     })
     fetcherThreads.foreach(_.start())
     println(s"${ReplicaVerificationTool.getCurrentTimeString()}: verification process is started.")
@@ -223,7 +221,7 @@ object ReplicaVerificationTool extends Logging {
   private def createAdminClient(brokerUrl: String): Admin = {
     val props = new Properties()
     props.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, brokerUrl)
-    admin.AdminClient.create(props)
+    Admin.create(props)
   }
 
   private def initialOffsets(topicPartitions: Seq[TopicPartition], consumerConfig: Properties,
@@ -272,31 +270,31 @@ private class ReplicaBuffer(expectedReplicasPerTopicPartition: Map[TopicPartitio
   private var maxLagTopicAndPartition: TopicPartition = null
   initialize()
 
-  def createNewFetcherBarrier() {
+  def createNewFetcherBarrier(): Unit = {
     fetcherBarrier.set(new CountDownLatch(expectedNumFetchers))
   }
 
   def getFetcherBarrier() = fetcherBarrier.get
 
-  def createNewVerificationBarrier() {
+  def createNewVerificationBarrier(): Unit = {
     verificationBarrier.set(new CountDownLatch(1))
   }
 
   def getVerificationBarrier() = verificationBarrier.get
 
-  private def initialize() {
+  private def initialize(): Unit = {
     for (topicPartition <- expectedReplicasPerTopicPartition.keySet)
       recordsCache.put(topicPartition, new Pool[Int, FetchResponse.PartitionData[MemoryRecords]])
     setInitialOffsets()
   }
 
 
-  private def setInitialOffsets() {
+  private def setInitialOffsets(): Unit = {
     for ((tp, offset) <- initialOffsets)
       fetchOffsetMap.put(tp, offset)
   }
 
-  def addFetchedData(topicAndPartition: TopicPartition, replicaId: Int, partitionData: FetchResponse.PartitionData[MemoryRecords]) {
+  def addFetchedData(topicAndPartition: TopicPartition, replicaId: Int, partitionData: FetchResponse.PartitionData[MemoryRecords]): Unit = {
     recordsCache.get(topicAndPartition).put(replicaId, partitionData)
   }
 
@@ -304,7 +302,7 @@ private class ReplicaBuffer(expectedReplicasPerTopicPartition: Map[TopicPartitio
     fetchOffsetMap.get(topicAndPartition)
   }
 
-  def verifyCheckSum(println: String => Unit) {
+  def verifyCheckSum(println: String => Unit): Unit = {
     debug("Begin verification")
     maxLag = -1L
     for ((topicPartition, fetchResponsePerReplica) <- recordsCache) {
@@ -390,7 +388,7 @@ private class ReplicaFetcher(name: String, sourceBroker: Node, topicPartitions: 
   private val fetchEndpoint = new ReplicaFetcherBlockingSend(sourceBroker, new ConsumerConfig(consumerConfig), new Metrics(), Time.SYSTEM, fetcherId,
     s"broker-${Request.DebuggingConsumerId}-fetcher-$fetcherId")
 
-  override def doWork() {
+  override def doWork(): Unit = {
 
     val fetcherBarrier = replicaBuffer.getFetcherBarrier()
     val verificationBarrier = replicaBuffer.getVerificationBarrier()
@@ -458,7 +456,8 @@ private class ReplicaFetcherBlockingSend(sourceNode: Node,
   private val socketTimeout: Int = consumerConfig.getInt(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG)
 
   private val networkClient = {
-    val channelBuilder = org.apache.kafka.clients.ClientUtils.createChannelBuilder(consumerConfig, time)
+    val logContext = new LogContext()
+    val channelBuilder = org.apache.kafka.clients.ClientUtils.createChannelBuilder(consumerConfig, time, logContext)
     val selector = new Selector(
       NetworkReceive.UNLIMITED,
       consumerConfig.getLong(ConsumerConfig.CONNECTIONS_MAX_IDLE_MS_CONFIG),
@@ -468,7 +467,7 @@ private class ReplicaFetcherBlockingSend(sourceNode: Node,
       Map("broker-id" -> sourceNode.id.toString, "fetcher-id" -> fetcherId.toString).asJava,
       false,
       channelBuilder,
-      new LogContext
+      logContext
     )
     new NetworkClient(
       selector,
@@ -484,7 +483,7 @@ private class ReplicaFetcherBlockingSend(sourceNode: Node,
       time,
       false,
       new ApiVersions,
-      new LogContext
+      logContext
     )
   }
 

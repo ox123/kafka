@@ -35,9 +35,9 @@ trait BlockingSend {
 
   def sendRequest(requestBuilder: AbstractRequest.Builder[_ <: AbstractRequest]): ClientResponse
 
-  def initiateClose()
+  def initiateClose(): Unit
 
-  def close()
+  def close(): Unit
 }
 
 class ReplicaFetcherBlockingSend(sourceBroker: BrokerEndPoint,
@@ -59,7 +59,8 @@ class ReplicaFetcherBlockingSend(sourceBroker: BrokerEndPoint,
       brokerConfig.interBrokerListenerName,
       brokerConfig.saslMechanismInterBrokerProtocol,
       time,
-      brokerConfig.saslInterBrokerHandshakeRequestEnable
+      brokerConfig.saslInterBrokerHandshakeRequestEnable,
+      logContext
     )
     val reconfigurableChannelBuilder = channelBuilder match {
       case reconfigurable: Reconfigurable =>

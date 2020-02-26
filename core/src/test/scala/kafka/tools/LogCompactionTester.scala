@@ -26,8 +26,8 @@ import java.util.{Properties, Random}
 
 import joptsimple.OptionParser
 import kafka.utils._
-import org.apache.kafka.clients.admin.NewTopic
-import org.apache.kafka.clients.{CommonClientConfigs, admin}
+import org.apache.kafka.clients.admin.{Admin, NewTopic}
+import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.clients.consumer.{ConsumerConfig, KafkaConsumer}
 import org.apache.kafka.clients.producer.{KafkaProducer, ProducerConfig, ProducerRecord}
 import org.apache.kafka.common.config.TopicConfig
@@ -58,7 +58,7 @@ object LogCompactionTester {
   //maximum line size while reading produced/consumed record text file
   private val ReadAheadLimit = 4906
 
-  def main(args: Array[String]) {
+  def main(args: Array[String]): Unit = {
     val parser = new OptionParser(false)
     val numMessagesOpt = parser.accepts("messages", "The number of messages to send or consume.")
       .withRequiredArg
@@ -138,7 +138,7 @@ object LogCompactionTester {
   def createTopics(brokerUrl: String, topics: Seq[String]): Unit = {
     val adminConfig = new Properties
     adminConfig.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, brokerUrl)
-    val adminClient = admin.AdminClient.create(adminConfig)
+    val adminClient = Admin.create(adminConfig)
 
     try {
       val topicConfigs = Map(TopicConfig.CLEANUP_POLICY_CONFIG -> TopicConfig.CLEANUP_POLICY_COMPACT)
@@ -157,7 +157,7 @@ object LogCompactionTester {
 
   def lineCount(filPath: Path): Int = Files.readAllLines(filPath).size
 
-  def validateOutput(producedDataFile: File, consumedDataFile: File) {
+  def validateOutput(producedDataFile: File, consumedDataFile: File): Unit = {
     val producedReader = externalSort(producedDataFile)
     val consumedReader = externalSort(consumedDataFile)
     val produced = valuesIterator(producedReader)
@@ -192,7 +192,7 @@ object LogCompactionTester {
     Utils.delete(consumedDedupedFile)
   }
 
-  def require(requirement: Boolean, message: => Any) {
+  def require(requirement: Boolean, message: => Any): Unit = {
     if (!requirement) {
       System.err.println(s"Data validation failed : $message")
       Exit.exit(1)
@@ -242,7 +242,7 @@ object LogCompactionTester {
     val builder = new ProcessBuilder("sort", "--key=1,2", "--stable", "--buffer-size=20%", "--temporary-directory=" + Files.createTempDirectory("log_compaction_test"), file.getAbsolutePath)
     val process = builder.start
     new Thread() {
-      override def run() {
+      override def run(): Unit = {
         val exitCode = process.waitFor()
         if (exitCode != 0) {
           System.err.println("Process exited abnormally.")
