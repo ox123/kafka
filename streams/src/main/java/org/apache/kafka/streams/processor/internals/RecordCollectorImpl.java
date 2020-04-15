@@ -16,9 +16,6 @@
  */
 package org.apache.kafka.streams.processor.internals;
 
-import org.apache.kafka.clients.consumer.CommitFailedException;
-import org.apache.kafka.clients.consumer.Consumer;
-import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.KafkaException;
@@ -33,7 +30,6 @@ import org.apache.kafka.common.errors.ProducerFencedException;
 import org.apache.kafka.common.errors.RetriableException;
 import org.apache.kafka.common.errors.SecurityDisabledException;
 import org.apache.kafka.common.errors.SerializationException;
-import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.errors.UnknownServerException;
 import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.metrics.Sensor;
@@ -59,7 +55,6 @@ public class RecordCollectorImpl implements RecordCollector {
 
     private final Logger log;
     private final TaskId taskId;
-    private final Consumer<byte[], byte[]> mainConsumer;
     private final StreamsProducer streamsProducer;
     private final ProductionExceptionHandler productionExceptionHandler;
     private final Sensor droppedRecordsSensor;
@@ -73,17 +68,14 @@ public class RecordCollectorImpl implements RecordCollector {
      */
     public RecordCollectorImpl(final LogContext logContext,
                                final TaskId taskId,
-                               final Consumer<byte[], byte[]> mainConsumer,
                                final StreamsProducer streamsProducer,
                                final ProductionExceptionHandler productionExceptionHandler,
-                               final boolean eosEnabled,
                                final StreamsMetricsImpl streamsMetrics) {
         this.log = logContext.logger(getClass());
         this.taskId = taskId;
-        this.mainConsumer = mainConsumer;
         this.streamsProducer = streamsProducer;
         this.productionExceptionHandler = productionExceptionHandler;
-        this.eosEnabled = eosEnabled;
+        this.eosEnabled = streamsProducer.eosEnabled();
 
         final String threadId = Thread.currentThread().getName();
         this.droppedRecordsSensor = TaskMetrics.droppedRecordsSensorOrSkippedRecordsSensor(threadId, taskId.toString(), streamsMetrics);
@@ -152,6 +144,23 @@ public class RecordCollectorImpl implements RecordCollector {
         try {
             keyBytes = keySerializer.serialize(topic, headers, key);
             valBytes = valueSerializer.serialize(topic, headers, value);
+        } catch (final ClassCastException exception) {
+            final String keyClass = key == null ? "unknown because key is null" : key.getClass().getName();
+            final String valueClass = value == null ? "unknown because value is null" : value.getClass().getName();
+            throw new StreamsException(
+                String.format(
+                    "ClassCastException while producing data to topic %s. " +
+                        "A serializer (key: %s / value: %s) is not compatible to the actual key or value type " +
+                        "(key type: %s / value type: %s). " +
+                        "Change the default Serdes in StreamConfig or provide correct Serdes via method parameters " +
+                        "(for example if using the DSL, `#to(String topic, Produced<K, V> produced)` with " +
+                        "`Produced.keySerde(WindowedSerdes.timeWindowedSerdeFrom(String.class))`).",
+                    topic,
+                    keySerializer.getClass().getName(),
+                    valueSerializer.getClass().getName(),
+                    keyClass,
+                    valueClass),
+                exception);
         } catch (final RuntimeException exception) {
             final String errorMessage = String.format(SEND_EXCEPTION_MESSAGE, topic, taskId, exception.toString());
             throw new StreamsException(errorMessage, exception);
@@ -167,7 +176,11 @@ public class RecordCollectorImpl implements RecordCollector {
 
             if (exception == null) {
                 final TopicPartition tp = new TopicPartition(metadata.topic(), metadata.partition());
-                offsets.put(tp, metadata.offset());
+                if (metadata.offset() >= 0L) {
+                    offsets.put(tp, metadata.offset());
+                } else {
+                    log.warn("Received offset={} in produce response for {}", metadata.offset(), tp);
+                }
             } else {
                 recordSendError(topic, exception, serializedRecord);
 
@@ -221,25 +234,6 @@ public class RecordCollectorImpl implements RecordCollector {
         return securityException || communicationException;
     }
 
-    public void commit(final Map<TopicPartition, OffsetAndMetadata> offsets) {
-        if (eosEnabled) {
-            streamsProducer.commitTransaction(offsets);
-        } else {
-            try {
-                mainConsumer.commitSync(offsets);
-            } catch (final CommitFailedException error) {
-                throw new TaskMigratedException("Consumer committing offsets failed, " +
-                    "indicating the corresponding thread is no longer part of the group", error);
-            } catch (final TimeoutException error) {
-                // TODO KIP-447: we can consider treating it as non-fatal and retry on the thread level
-                throw new StreamsException("Timed out while committing offsets via consumer for task " + taskId, error);
-            } catch (final KafkaException error) {
-                throw new StreamsException("Error encountered committing offsets via consumer for task " + taskId, error);
-            }
-        }
-
-    }
-
     /**
      * @throws StreamsException fatal error that should cause the thread to die
      * @throws TaskMigratedException recoverable error that would cause the task to be removed
@@ -262,7 +256,6 @@ public class RecordCollectorImpl implements RecordCollector {
         if (eosEnabled) {
             streamsProducer.abortTransaction();
         }
-        streamsProducer.close();
 
         checkForException();
     }

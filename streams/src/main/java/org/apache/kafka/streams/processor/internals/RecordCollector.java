@@ -16,7 +16,6 @@
  */
 package org.apache.kafka.streams.processor.internals;
 
-import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.header.Headers;
@@ -25,7 +24,7 @@ import org.apache.kafka.streams.processor.StreamPartitioner;
 
 import java.util.Map;
 
-public interface RecordCollector extends AutoCloseable {
+public interface RecordCollector {
 
     <K, V> void send(final String topic,
                      final K key,
@@ -44,8 +43,6 @@ public interface RecordCollector extends AutoCloseable {
                      final Serializer<K> keySerializer,
                      final Serializer<V> valueSerializer,
                      final StreamPartitioner<? super K, ? super V> partitioner);
-
-    void commit(final Map<TopicPartition, OffsetAndMetadata> offsets);
 
     /**
      * Initialize the internal {@link Producer}; note this function should be made idempotent
