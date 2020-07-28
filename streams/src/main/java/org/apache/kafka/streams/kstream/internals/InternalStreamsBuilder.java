@@ -312,11 +312,12 @@ public class InternalStreamsBuilder implements InternalNameProvider {
                 graphNodePriorityQueue.offer(graphNode);
             }
         }
+        internalTopologyBuilder.validateCopartition();
     }
 
     private void maybePerformOptimizations(final Properties props) {
 
-        if (props != null && StreamsConfig.OPTIMIZE.equals(props.getProperty(StreamsConfig.TOPOLOGY_OPTIMIZATION))) {
+        if (props != null && StreamsConfig.OPTIMIZE.equals(props.getProperty(StreamsConfig.TOPOLOGY_OPTIMIZATION_CONFIG))) {
             LOG.debug("Optimizing the Kafka Streams graph for repartition nodes");
             optimizeKTableSourceTopics();
             maybeOptimizeRepartitionOperations();

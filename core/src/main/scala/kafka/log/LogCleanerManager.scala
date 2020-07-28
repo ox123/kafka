@@ -258,7 +258,6 @@ private[log] class LogCleanerManager(val logDirs: Seq[File],
       abortAndPauseCleaning(topicPartition)
       resumeCleaning(Seq(topicPartition))
     }
-    info(s"The cleaning for partition $topicPartition is aborted")
   }
 
   /**
@@ -285,11 +284,9 @@ private[log] class LogCleanerManager(val logDirs: Seq[File],
         case Some(s) =>
           throw new IllegalStateException(s"Compaction for partition $topicPartition cannot be aborted and paused since it is in $s state.")
       }
-
       while(!isCleaningInStatePaused(topicPartition))
         pausedCleaningCond.await(100, TimeUnit.MILLISECONDS)
     }
-    info(s"The cleaning for partition $topicPartition is aborted and paused")
   }
 
   /**
@@ -357,12 +354,12 @@ private[log] class LogCleanerManager(val logDirs: Seq[File],
     }
   }
 
-  def updateCheckpoints(dataDir: File, update: Option[(TopicPartition,Long)]): Unit = {
+  def updateCheckpoints(dataDir: File, update: Option[(TopicPartition, Long)]): Unit = {
     inLock(lock) {
       val checkpoint = checkpoints(dataDir)
       if (checkpoint != null) {
         try {
-          val existing = checkpoint.read().filter { case (k, _) => logs.keys.contains(k) } ++ update
+          val existing = checkpoint.read().filter { case (tp, _) => logs.keys.contains(tp) } ++ update
           checkpoint.write(existing)
         } catch {
           case e: KafkaStorageException =>
@@ -599,7 +596,7 @@ private[log] object LogCleanerManager extends Logging {
   def calculateCleanableBytes(log: Log, firstDirtyOffset: Long, uncleanableOffset: Long): (Long, Long) = {
     val firstUncleanableSegment = log.nonActiveLogSegmentsFrom(uncleanableOffset).headOption.getOrElse(log.activeSegment)
     val firstUncleanableOffset = firstUncleanableSegment.baseOffset
-    val cleanableBytes = log.logSegments(firstDirtyOffset, math.max(firstDirtyOffset, firstUncleanableOffset)).map(_.size.toLong).sum
+    val cleanableBytes = log.logSegments(math.min(firstDirtyOffset, firstUncleanableOffset), firstUncleanableOffset).map(_.size.toLong).sum
 
     (firstUncleanableOffset, cleanableBytes)
   }

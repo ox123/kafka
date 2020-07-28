@@ -291,7 +291,7 @@ class TopologyTest {
         .transform(
           () =>
             new Transformer[String, String, KeyValue[String, String]] {
-              override def init(context: ProcessorContext[Object, Object]): Unit = ()
+              override def init(context: ProcessorContext): Unit = ()
               override def transform(key: String, value: String): KeyValue[String, String] =
                 new KeyValue(key, value.toLowerCase)
               override def close(): Unit = ()
@@ -312,7 +312,7 @@ class TopologyTest {
       val lowered: KStreamJ[String, String] = textLines.transform(
         () =>
           new Transformer[String, String, KeyValue[String, String]] {
-            override def init(context: ProcessorContext[Object, Object]): Unit = ()
+            override def init(context: ProcessorContext): Unit = ()
             override def transform(key: String, value: String): KeyValue[String, String] =
               new KeyValue(key, value.toLowerCase)
             override def close(): Unit = ()
@@ -335,10 +335,10 @@ class TopologyTest {
   def shouldBuildIdenticalTopologyInJavaNScalaProperties(): Unit = {
 
     val props = new Properties()
-    props.put(StreamsConfig.TOPOLOGY_OPTIMIZATION, StreamsConfig.OPTIMIZE)
+    props.put(StreamsConfig.TOPOLOGY_OPTIMIZATION_CONFIG, StreamsConfig.OPTIMIZE)
 
     val propsNoOptimization = new Properties()
-    propsNoOptimization.put(StreamsConfig.TOPOLOGY_OPTIMIZATION, StreamsConfig.NO_OPTIMIZATION)
+    propsNoOptimization.put(StreamsConfig.TOPOLOGY_OPTIMIZATION_CONFIG, StreamsConfig.NO_OPTIMIZATION)
 
     val AGGREGATION_TOPIC = "aggregationTopic"
     val REDUCE_TOPIC = "reduceTopic"
