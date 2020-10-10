@@ -608,7 +608,6 @@ public class StreamThread extends Thread {
      */
     // Visible for testing
     void runOnce() {
-        final ConsumerRecords<byte[], byte[]> records;
         final long startMs = time.milliseconds();
         now = startMs;
 
@@ -1087,7 +1086,7 @@ public class StreamThread extends Thread {
 
     Consumer<byte[], byte[]> restoreConsumer() {
         return restoreConsumer;
-    };
+    }
 
     Admin adminClient() {
         return adminClient;
@@ -1095,5 +1094,5 @@ public class StreamThread extends Thread {
 
     InternalTopologyBuilder internalTopologyBuilder() {
         return builder;
-    };
+    }
 }
