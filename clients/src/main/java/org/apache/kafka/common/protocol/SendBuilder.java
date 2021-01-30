@@ -19,13 +19,17 @@ package org.apache.kafka.common.protocol;
 import org.apache.kafka.common.network.ByteBufferSend;
 import org.apache.kafka.common.network.Send;
 import org.apache.kafka.common.record.BaseRecords;
+import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MultiRecordsSend;
+import org.apache.kafka.common.record.UnalignedMemoryRecords;
 import org.apache.kafka.common.requests.RequestHeader;
 import org.apache.kafka.common.requests.ResponseHeader;
 import org.apache.kafka.common.utils.ByteUtils;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Queue;
 
 /**
@@ -34,35 +38,21 @@ import java.util.Queue;
  * allocating new space for "zero-copy" fields (see {@link #writeByteBuffer(ByteBuffer)}
  * and {@link #writeRecords(BaseRecords)}).
  *
- * See {@link org.apache.kafka.common.requests.EnvelopeRequest#toSend(String, RequestHeader)}
+ * See {@link org.apache.kafka.common.requests.EnvelopeRequest#toSend(RequestHeader)}
  * for example usage.
  */
 public class SendBuilder implements Writable {
-    private final Queue<Send> sends = new ArrayDeque<>();
     private final ByteBuffer buffer;
-    private final String destinationId;
 
-    SendBuilder(String destinationId, int size) {
-        this.destinationId = destinationId;
+    private final Queue<Send> sends = new ArrayDeque<>(1);
+    private long sizeOfSends = 0;
+
+    private final List<ByteBuffer> buffers = new ArrayList<>();
+    private long sizeOfBuffers = 0;
+
+    SendBuilder(int size) {
         this.buffer = ByteBuffer.allocate(size);
         this.buffer.mark();
-    }
-
-    private void flushCurrentBuffer() {
-        int latestPosition = buffer.position();
-        buffer.reset();
-
-        if (latestPosition > buffer.position()) {
-            buffer.limit(latestPosition);
-            addByteBufferSend(buffer.slice());
-            buffer.position(latestPosition);
-            buffer.limit(buffer.capacity());
-            buffer.mark();
-        }
-    }
-
-    private void addByteBufferSend(ByteBuffer buffer) {
-        sends.add(new ByteBufferSend(destinationId, buffer));
     }
 
     @Override
@@ -108,8 +98,8 @@ public class SendBuilder implements Writable {
      */
     @Override
     public void writeByteBuffer(ByteBuffer buf) {
-        flushCurrentBuffer();
-        addByteBufferSend(buf.duplicate());
+        flushPendingBuffer();
+        addBuffer(buf.duplicate());
     }
 
     @Override
@@ -122,30 +112,79 @@ public class SendBuilder implements Writable {
         ByteUtils.writeVarlong(i, buffer);
     }
 
+    private void addBuffer(ByteBuffer buffer) {
+        buffers.add(buffer);
+        sizeOfBuffers += buffer.remaining();
+    }
+
+    private void addSend(Send send) {
+        sends.add(send);
+        sizeOfSends += send.size();
+    }
+
+    private void clearBuffers() {
+        buffers.clear();
+        sizeOfBuffers = 0;
+    }
+
     /**
      * Write a record set. The underlying record data will be retained
-     * in the result of {@link #build()}. See {@link BaseRecords#toSend(String)}.
+     * in the result of {@link #build()}. See {@link BaseRecords#toSend()}.
      *
      * @param records the records to write
      */
     @Override
     public void writeRecords(BaseRecords records) {
-        flushCurrentBuffer();
-        sends.add(records.toSend(destinationId));
+        if (records instanceof MemoryRecords) {
+            flushPendingBuffer();
+            addBuffer(((MemoryRecords) records).buffer());
+        } else if (records instanceof UnalignedMemoryRecords) {
+            flushPendingBuffer();
+            addBuffer(((UnalignedMemoryRecords) records).buffer());
+        } else {
+            flushPendingSend();
+            addSend(records.toSend());
+        }
+    }
+
+    private void flushPendingSend() {
+        flushPendingBuffer();
+        if (!buffers.isEmpty()) {
+            ByteBuffer[] byteBufferArray = buffers.toArray(new ByteBuffer[0]);
+            addSend(new ByteBufferSend(byteBufferArray, sizeOfBuffers));
+            clearBuffers();
+        }
+    }
+
+    private void flushPendingBuffer() {
+        int latestPosition = buffer.position();
+        buffer.reset();
+
+        if (latestPosition > buffer.position()) {
+            buffer.limit(latestPosition);
+            addBuffer(buffer.slice());
+
+            buffer.position(latestPosition);
+            buffer.limit(buffer.capacity());
+            buffer.mark();
+        }
     }
 
     public Send build() {
-        flushCurrentBuffer();
-        return new MultiRecordsSend(destinationId, sends);
+        flushPendingSend();
+
+        if (sends.size() == 1) {
+            return sends.poll();
+        } else {
+            return new MultiRecordsSend(sends, sizeOfSends);
+        }
     }
 
     public static Send buildRequestSend(
-        String destination,
         RequestHeader header,
-        ApiMessage apiRequest
+        Message apiRequest
     ) {
         return buildSend(
-            destination,
             header.data(),
             header.headerVersion(),
             apiRequest,
@@ -154,13 +193,11 @@ public class SendBuilder implements Writable {
     }
 
     public static Send buildResponseSend(
-        String destination,
         ResponseHeader header,
-        ApiMessage apiResponse,
+        Message apiResponse,
         short apiVersion
     ) {
         return buildSend(
-            destination,
             header.data(),
             header.headerVersion(),
             apiResponse,
@@ -169,25 +206,22 @@ public class SendBuilder implements Writable {
     }
 
     private static Send buildSend(
-        String destination,
-        ApiMessage header,
+        Message header,
         short headerVersion,
-        ApiMessage apiMessage,
+        Message apiMessage,
         short apiVersion
     ) {
         ObjectSerializationCache serializationCache = new ObjectSerializationCache();
-        MessageSizeAccumulator messageSize = new MessageSizeAccumulator();
 
+        MessageSizeAccumulator messageSize = new MessageSizeAccumulator();
         header.addSize(messageSize, serializationCache, headerVersion);
         apiMessage.addSize(messageSize, serializationCache, apiVersion);
 
-        int totalSize = messageSize.totalSize();
-        int sizeExcludingZeroCopyFields = totalSize - messageSize.zeroCopySize();
-
-        SendBuilder builder = new SendBuilder(destination, sizeExcludingZeroCopyFields + 4);
-        builder.writeInt(totalSize);
+        SendBuilder builder = new SendBuilder(messageSize.sizeExcludingZeroCopy() + 4);
+        builder.writeInt(messageSize.totalSize());
         header.write(builder, serializationCache, headerVersion);
         apiMessage.write(builder, serializationCache, apiVersion);
+
         return builder.build();
     }
 

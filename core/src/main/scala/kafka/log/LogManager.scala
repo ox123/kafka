@@ -35,6 +35,7 @@ import scala.jdk.CollectionConverters._
 import scala.collection._
 import scala.collection.mutable.ArrayBuffer
 import scala.util.{Failure, Success, Try}
+import kafka.utils.Implicits._
 
 /**
  * The entry point to the kafka log management subsystem. The log manager is responsible for log creation, retrieval, and cleaning.
@@ -478,26 +479,23 @@ class LogManager(logDirs: Seq[File],
     }
 
     try {
-      for ((dir, dirJobs) <- jobs) {
-        dirJobs.foreach(_.get)
+      jobs.forKeyValue { (dir, dirJobs) =>
+        if (waitForAllToComplete(dirJobs,
+          e => warn(s"There was an error in one of the threads during LogManager shutdown: ${e.getCause}"))) {
+          val logs = logsInDir(localLogsByDir, dir)
 
-        val logs = logsInDir(localLogsByDir, dir)
+          // update the last flush point
+          debug(s"Updating recovery points at $dir")
+          checkpointRecoveryOffsetsInDir(dir, logs)
 
-        // update the last flush point
-        debug(s"Updating recovery points at $dir")
-        checkpointRecoveryOffsetsInDir(dir, logs)
+          debug(s"Updating log start offsets at $dir")
+          checkpointLogStartOffsetsInDir(dir, logs)
 
-        debug(s"Updating log start offsets at $dir")
-        checkpointLogStartOffsetsInDir(dir, logs)
-
-        // mark that the shutdown was clean by creating marker file
-        debug(s"Writing clean shutdown marker at $dir")
-        CoreUtils.swallow(Files.createFile(new File(dir, Log.CleanShutdownFile).toPath), this)
+          // mark that the shutdown was clean by creating marker file
+          debug(s"Writing clean shutdown marker at $dir")
+          CoreUtils.swallow(Files.createFile(new File(dir, Log.CleanShutdownFile).toPath), this)
+        }
       }
-    } catch {
-      case e: ExecutionException =>
-        error(s"There was an error in one of the threads during LogManager shutdown: ${e.getCause}")
-        throw e.getCause
     } finally {
       threadPools.foreach(_.shutdown())
       // regardless of whether the close succeeded, we need to unlock the data directories
@@ -1162,6 +1160,21 @@ class LogManager(logDirs: Seq[File],
 
 object LogManager {
 
+  /**
+   * Wait all jobs to complete
+   * @param jobs jobs
+   * @param callback this will be called to handle the exception caused by each Future#get
+   * @return true if all pass. Otherwise, false
+   */
+  private[log] def waitForAllToComplete(jobs: Seq[Future[_]], callback: Throwable => Unit): Boolean = {
+    jobs.count(future => Try(future.get) match {
+      case Success(_) => false
+      case Failure(e) =>
+        callback(e)
+        true
+    }) == 0
+  }
+
   val RecoveryPointCheckpointFile = "recovery-point-offset-checkpoint"
   val LogStartOffsetCheckpointFile = "log-start-offset-checkpoint"
   val ProducerIdExpirationCheckIntervalMs = 10 * 60 * 1000
@@ -1174,7 +1187,7 @@ object LogManager {
             time: Time,
             brokerTopicStats: BrokerTopicStats,
             logDirFailureChannel: LogDirFailureChannel): LogManager = {
-    val defaultProps = KafkaServer.copyKafkaConfigToLog(config)
+    val defaultProps = LogConfig.extractLogConfigMap(config)
 
     LogConfig.validateValues(defaultProps)
     val defaultLogConfig = LogConfig(defaultProps)
